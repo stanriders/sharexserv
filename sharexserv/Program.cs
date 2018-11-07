@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using Force.Crc32;
@@ -13,9 +14,18 @@ namespace sharexserv
 		private static readonly string path = "./files/";
 		private static readonly string address = "http://localhost/";
 		private static readonly string fail_address = "http://localhost/failed.jpg";
+		private static readonly int store_duration = 14; // days
+		private static readonly string[] file_ignore_list = new string[] // never delete these
+		{
+			"index.html",
+			"style.css",
+			"failed.jpg"
+		};
 
 		static void Main(string[] args)
 		{
+			Cleanup(); // perform cleanup as soon as we start
+
 			HttpListener listener = new HttpListener();
 
 #if DEBUG
@@ -127,6 +137,19 @@ namespace sharexserv
 			//listener.Stop();
 		}
 
+		private static void Cleanup()
+		{
+			foreach (string filePath in Directory.EnumerateFiles(path))
+			{
+				if (!file_ignore_list.Contains(Path.GetFileName(filePath)) && File.GetLastWriteTimeUtc(filePath).AddDays(store_duration) < DateTime.UtcNow)
+				{
+					Console.WriteLine($"Removed {filePath}");
+					File.Delete(filePath);
+				}
+			}
+		}
+
+		#region Data Detection
 		private static string GetBoundary(string ctype)
 		{
 			return "--" + ctype.Split(';')[1].Split('=')[1];
@@ -225,5 +248,6 @@ namespace sharexserv
 
 			return -1;
 		}
+		#endregion
 	}
 }
