@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Runtime.Caching;
 using Force.Crc32;
 
 namespace sharexserv
@@ -21,6 +22,9 @@ namespace sharexserv
 			"style.css",
 			"failed.jpg"
 		};
+
+		private static CacheEntryRemovedCallback cachedFileRemove = new CacheEntryRemovedCallback(RemoveCachedFile);
+		private static MemoryCache cache = MemoryCache.Default;
 
 		static void Main(string[] args)
 		{
@@ -43,12 +47,11 @@ namespace sharexserv
 				try
 #endif
 				{
+					// GetContext is blocking
 					HttpListenerContext context = listener.GetContext();
 					HttpListenerRequest request = context.Request;
 					if (request.HasEntityBody)
 					{
-						Console.WriteLine(request.ContentType);
-
 						bool success = false;
 						string fileName = string.Empty;
 						if (request.Headers.Get("key") == key) // password check
@@ -89,25 +92,34 @@ namespace sharexserv
 											reader.ReadLine();
 										}
 									}
-								}
 
-								// save data
-								if (shouldSave)
-								{
-									fullReq.Position = 0;
-									using (MemoryStream data = GetFile(request.ContentEncoding, GetBoundary(request.ContentType), fullReq))
+									// save data
+									if (shouldSave)
 									{
-										data.Position = 0;
-										byte[] buf = new byte[data.Length];
-										data.Read(buf, 0, (int)data.Length);
-
-										// use CRC32 as an unique file name
-										fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
-
-										if (Directory.Exists(path))
+										fullReq.Position = 0;
+										using (MemoryStream data = GetFile(request.ContentEncoding, GetBoundary(request.ContentType), fullReq))
 										{
-											File.WriteAllBytes(path + fileName, buf);
-											success = true;
+											data.Position = 0;
+											byte[] buf = new byte[data.Length];
+											data.Read(buf, 0, (int)data.Length);
+
+											// use CRC32 as an unique file name
+											fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
+
+											if (Directory.Exists(path))
+											{
+												File.WriteAllBytes(path + fileName, buf);
+												Console.WriteLine($"Wrote {fileName}");
+
+												CacheItemPolicy policy = new CacheItemPolicy()
+												{
+													AbsoluteExpiration = DateTimeOffset.Now.AddDays(store_duration),
+													RemovedCallback = cachedFileRemove
+												};
+											
+												cache.Add(fileName, fileName, policy);
+												success = true;
+											}
 										}
 									}
 								}
@@ -135,6 +147,21 @@ namespace sharexserv
 			}
 
 			//listener.Stop();
+		}
+
+		private static void RemoveCachedFile(CacheEntryRemovedArguments arguments)
+		{
+			string fileName = arguments.CacheItem.Key;
+			var files = Directory.EnumerateFiles(path);
+			foreach (string dirFile in files)
+			{
+				if (Path.GetFileName(dirFile) == fileName)
+				{
+					Console.WriteLine($"Removed {fileName}");
+					File.Delete(path + fileName);
+					return;
+				}
+			}
 		}
 
 		private static void Cleanup()
