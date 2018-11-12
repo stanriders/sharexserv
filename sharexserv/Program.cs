@@ -10,12 +10,12 @@ namespace sharexserv
 {
 	class Program
 	{
-		private static readonly string listener_prefix = "http://+:80/upload/";
-		private static readonly string key = "";
-		private static readonly string path = "./files/";
-		private static readonly string address = "http://localhost/";
-		private static readonly string fail_address = "http://localhost/failed.jpg";
-		private static readonly int store_duration = 14; // days
+		private const string listener_prefix = "http://+:80/upload/";
+		private const string key = "";
+		private const string path = "./files/";
+		private const string address = "http://localhost/";
+		private const string fail_address = "http://localhost/failed.jpg";
+		private const int store_duration = 14; // days
 		private static readonly string[] file_ignore_list = new string[] // never delete these
 		{
 			"index.html",
@@ -49,95 +49,9 @@ namespace sharexserv
 				{
 					// GetContext is blocking
 					HttpListenerContext context = listener.GetContext();
-					HttpListenerRequest request = context.Request;
-					if (request.HasEntityBody)
+					if (context.Request.HasEntityBody)
 					{
-						bool success = false;
-						string fileName = string.Empty;
-						if (request.Headers.Get("key") == key) // password check
-						{
-							string fileType = string.Empty;
-							using (MemoryStream fullReq = new MemoryStream())
-							{
-								request.InputStream.CopyTo(fullReq);
-								fullReq.Position = 0;
-
-								bool shouldSave = false;
-
-								using (StreamReader reader = new StreamReader(fullReq))
-								{
-									// iterate through first 4 lines to find the file extension
-									for (int i = 0; i < 3; i++)
-									{
-										// Content-Type
-										if (i == 2)
-										{
-											string contentType = reader.ReadLine().Split(':')[1].TrimStart(' ');
-											if (contentType == "image/png" || contentType == "image/jpeg")
-											{
-												// only save if it's a picture
-												shouldSave = true;
-												if (contentType == "image/png")
-												{
-													fileType = ".png";
-												}
-												else if (contentType == "image/jpeg")
-												{
-													fileType = ".jpg";
-												}
-											}
-										}
-										else
-										{
-											reader.ReadLine();
-										}
-									}
-
-									// save data
-									if (shouldSave)
-									{
-										fullReq.Position = 0;
-										using (MemoryStream data = GetFile(request.ContentEncoding, GetBoundary(request.ContentType), fullReq))
-										{
-											data.Position = 0;
-											byte[] buf = new byte[data.Length];
-											data.Read(buf, 0, (int)data.Length);
-
-											// use CRC32 as an unique file name
-											fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
-
-											if (Directory.Exists(path))
-											{
-												File.WriteAllBytes(path + fileName, buf);
-												Console.WriteLine($"Wrote {fileName}");
-
-												CacheItemPolicy policy = new CacheItemPolicy()
-												{
-													AbsoluteExpiration = DateTimeOffset.Now.AddDays(store_duration),
-													RemovedCallback = cachedFileRemove
-												};
-											
-												cache.Add(fileName, fileName, policy);
-												success = true;
-											}
-										}
-									}
-								}
-							}
-						}
-						HttpListenerResponse response = context.Response;
-						
-						string responsestring;
-						if (success)
-							responsestring = address + fileName;
-						else
-							responsestring = fail_address;
-						byte[] buffer = Encoding.UTF8.GetBytes(responsestring);
-						
-						response.ContentLength64 = buffer.Length;
-						Stream output = response.OutputStream;
-						output.Write(buffer, 0, buffer.Length);
-						output.Close();
+						Response(context.Request, context.Response);
 					}
 				}
 #if !DEBUG
@@ -149,8 +63,99 @@ namespace sharexserv
 			//listener.Stop();
 		}
 
+		private static void Response(HttpListenerRequest request, HttpListenerResponse response)
+		{
+			bool success = false;
+			string fileName = string.Empty;
+			if (request.Headers.Get("key") == key) // password check
+			{
+				string fileType = string.Empty;
+				using (MemoryStream fullReq = new MemoryStream())
+				{
+					request.InputStream.CopyTo(fullReq);
+					fullReq.Position = 0;
+
+					bool shouldSave = false;
+
+					using (StreamReader reader = new StreamReader(fullReq))
+					{
+						// iterate through first 4 lines to find the file extension
+						for (int i = 0; i < 3; i++)
+						{
+							// Content-Type
+							if (i == 2)
+							{
+								string contentType = reader.ReadLine().Split(':')[1].TrimStart(' ');
+								if (contentType == "image/png" || contentType == "image/jpeg")
+								{
+									// only save if it's a picture
+									shouldSave = true;
+									if (contentType == "image/png")
+									{
+										fileType = ".png";
+									}
+									else if (contentType == "image/jpeg")
+									{
+										fileType = ".jpg";
+									}
+								}
+							}
+							else
+							{
+								reader.ReadLine();
+							}
+						}
+
+						// save data
+						if (shouldSave)
+						{
+							fullReq.Position = 0;
+							using (MemoryStream data = GetFile(request.ContentEncoding, GetBoundary(request.ContentType), fullReq))
+							{
+								data.Position = 0;
+								byte[] buf = new byte[data.Length];
+								data.Read(buf, 0, (int)data.Length);
+
+								// use CRC32 as an unique file name
+								fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
+
+								if (Directory.Exists(path))
+								{
+									File.WriteAllBytes(path + fileName, buf);
+									Console.WriteLine($"Wrote {fileName}");
+
+									// cache file name to remove it after store_duration days
+									CacheItemPolicy policy = new CacheItemPolicy()
+									{
+										AbsoluteExpiration = DateTimeOffset.Now.AddDays(store_duration),
+										RemovedCallback = cachedFileRemove
+									};
+
+									cache.Add(fileName, fileName, policy);
+									success = true;
+								}
+							}
+						}
+					}
+				}
+			}
+			// write file address in the response
+			string responsestring = fail_address;
+			if (success)
+				responsestring = address + fileName;
+
+			byte[] buffer = Encoding.UTF8.GetBytes(responsestring);
+			response.ContentLength64 = buffer.Length;
+
+			Stream output = response.OutputStream;
+			output.Write(buffer, 0, buffer.Length);
+			output.Close();
+		}
+
+		#region File Removal
 		private static void RemoveCachedFile(CacheEntryRemovedArguments arguments)
 		{
+			// iterate through all file in the directory and delete cached file
 			string fileName = arguments.CacheItem.Key;
 			var files = Directory.EnumerateFiles(path);
 			foreach (string dirFile in files)
@@ -166,6 +171,7 @@ namespace sharexserv
 
 		private static void Cleanup()
 		{
+			// delete all files in the directory that are older than store_duration
 			foreach (string filePath in Directory.EnumerateFiles(path))
 			{
 				if (!file_ignore_list.Contains(Path.GetFileName(filePath)) && File.GetLastWriteTimeUtc(filePath).AddDays(store_duration) < DateTime.UtcNow)
@@ -175,8 +181,12 @@ namespace sharexserv
 				}
 			}
 		}
+		#endregion
 
 		#region Data Detection
+
+		// Based on https://stackoverflow.com/questions/8466703/httplistener-and-file-upload
+
 		private static string GetBoundary(string ctype)
 		{
 			return "--" + ctype.Split(';')[1].Split('=')[1];
