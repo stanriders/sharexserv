@@ -8,9 +8,13 @@ using Force.Crc32;
 
 namespace sharexserv
 {
-	class Program
+	public static class Program
 	{
+#if DEBUG
+		private const string listener_prefix = "http://+:80/Temporary_Listen_Addresses/"; // windows' free to use prefix
+#else
 		private const string listener_prefix = "http://+:80/upload/";
+#endif
 		private const string key = "";
 		private const string path = "./files/";
 		private const string address = "http://localhost/";
@@ -26,19 +30,14 @@ namespace sharexserv
 		private static readonly CacheEntryRemovedCallback cachedFileRemove = RemoveCachedFile;
 		private static readonly MemoryCache cache = MemoryCache.Default;
 
-		static void Main(string[] args)
+		public static void Main(string[] args)
 		{
 			Cleanup(); // perform cleanup as soon as we start
 
 			HttpListener listener = new HttpListener();
-
-#if DEBUG
-			listener.Prefixes.Add("http://+:80/Temporary_Listen_Addresses/"); // windows' free to use prefix
-#else
 			listener.Prefixes.Add(listener_prefix);
-#endif
-
 			listener.Start();
+
 			Console.WriteLine("Listening...");
 
 			while (true)
@@ -55,7 +54,10 @@ namespace sharexserv
 					}
 				}
 #if !DEBUG
-				catch (Exception e) { Console.WriteLine(e.Message); }
+				catch (Exception e)
+				{
+					Console.WriteLine(e.Message);
+				}
 #endif
 
 			}
@@ -86,7 +88,7 @@ namespace sharexserv
 							if (i == 2)
 							{
 								string contentType = reader.ReadLine()?.Split(':')[1].TrimStart(' ');
-								if (!string.IsNullOrEmpty(contentType) && 
+								if (!string.IsNullOrEmpty(contentType) &&
 								    (contentType == "image/png" || contentType == "image/jpeg"))
 								{
 									// only save if it's a picture
@@ -111,28 +113,33 @@ namespace sharexserv
 						if (shouldSave)
 						{
 							fullReq.Position = 0;
-							using (MemoryStream data = GetFile(request.ContentEncoding, GetBoundary(request.ContentType), fullReq))
+							using (MemoryStream data = GetFile(request.ContentEncoding,
+								GetBoundary(request.ContentType), fullReq))
 							{
 								data.Position = 0;
 								byte[] buf = new byte[data.Length];
-								data.Read(buf, 0, (int)data.Length);
+								data.Read(buf, 0, (int) data.Length);
 
 								// use CRC32 as an unique file name
 								fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
 
 								if (Directory.Exists(path))
 								{
-									File.WriteAllBytes(path + fileName, buf);
-									Console.WriteLine($"Wrote {fileName}");
-
-									// cache file name to remove it after store_duration days
-									CacheItemPolicy policy = new CacheItemPolicy()
+									if (!File.Exists(path + fileName))
 									{
-										AbsoluteExpiration = DateTimeOffset.Now.AddDays(store_duration),
-										RemovedCallback = cachedFileRemove
-									};
+										File.WriteAllBytes(path + fileName, buf);
+										Console.WriteLine($"Wrote {fileName}");
 
-									cache.Add(fileName, fileName, policy);
+										// cache file name to remove it after store_duration days
+										CacheItemPolicy policy = new CacheItemPolicy()
+										{
+											AbsoluteExpiration = DateTimeOffset.Now.AddDays(store_duration),
+											RemovedCallback = cachedFileRemove
+										};
+
+										cache.Add(fileName, fileName, policy);
+									}
+
 									success = true;
 								}
 							}
@@ -140,6 +147,7 @@ namespace sharexserv
 					}
 				}
 			}
+
 			// write file address in the response
 			string responsestring = fail_address;
 			if (success)
@@ -154,6 +162,7 @@ namespace sharexserv
 		}
 
 		#region File Removal
+
 		private static void RemoveCachedFile(CacheEntryRemovedArguments arguments)
 		{
 			// iterate through all file in the directory and delete cached file
@@ -172,16 +181,25 @@ namespace sharexserv
 
 		private static void Cleanup()
 		{
-			// delete all files in the directory that are older than store_duration
-			foreach (string filePath in Directory.EnumerateFiles(path))
+			if (Directory.Exists(path))
 			{
-				if (!file_ignore_list.Contains(Path.GetFileName(filePath)) && File.GetLastWriteTimeUtc(filePath).AddDays(store_duration) < DateTime.UtcNow)
+				// delete all files in the directory that are older than store_duration
+				foreach (string filePath in Directory.EnumerateFiles(path))
 				{
-					Console.WriteLine($"Removed {filePath}");
-					File.Delete(filePath);
+					if (!file_ignore_list.Contains(Path.GetFileName(filePath)) &&
+					    File.GetLastWriteTimeUtc(filePath).AddDays(store_duration) < DateTime.UtcNow)
+					{
+						Console.WriteLine($"Removed {filePath}");
+						File.Delete(filePath);
+					}
 				}
 			}
+			else
+			{
+				Directory.CreateDirectory(path);
+			}
 		}
+
 		#endregion
 
 		#region Data Detection
@@ -286,6 +304,7 @@ namespace sharexserv
 
 			return -1;
 		}
+
 		#endregion
 	}
 }
