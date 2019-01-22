@@ -16,15 +16,15 @@ namespace sharexserv
 		private const string address = "http://localhost/";
 		private const string fail_address = "http://localhost/failed.jpg";
 		private const int store_duration = 14; // days
-		private static readonly string[] file_ignore_list = new string[] // never delete these
+		private static readonly string[] file_ignore_list =
 		{
 			"index.html",
 			"style.css",
 			"failed.jpg"
-		};
+		}; // never delete these
 
-		private static CacheEntryRemovedCallback cachedFileRemove = new CacheEntryRemovedCallback(RemoveCachedFile);
-		private static MemoryCache cache = MemoryCache.Default;
+		private static readonly CacheEntryRemovedCallback cachedFileRemove = RemoveCachedFile;
+		private static readonly MemoryCache cache = MemoryCache.Default;
 
 		static void Main(string[] args)
 		{
@@ -85,8 +85,9 @@ namespace sharexserv
 							// Content-Type
 							if (i == 2)
 							{
-								string contentType = reader.ReadLine().Split(':')[1].TrimStart(' ');
-								if (contentType == "image/png" || contentType == "image/jpeg")
+								string contentType = reader.ReadLine()?.Split(':')[1].TrimStart(' ');
+								if (!string.IsNullOrEmpty(contentType) && 
+								    (contentType == "image/png" || contentType == "image/jpeg"))
 								{
 									// only save if it's a picture
 									shouldSave = true;
