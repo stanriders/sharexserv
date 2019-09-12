@@ -5,37 +5,40 @@ using System.Net;
 using System.Text;
 using System.Runtime.Caching;
 using Force.Crc32;
+using YamlDotNet.Serialization;
 
 namespace sharexserv
 {
 	public static class Program
 	{
-#if DEBUG
-		private const string listener_prefix = "http://+:80/Temporary_Listen_Addresses/"; // windows' free to use prefix
-#else
-		private const string listener_prefix = "http://+:80/upload/";
-#endif
-		private const string key = "";
-		private const string path = "./files/";
-		private const string address = "http://localhost/";
-		private const string fail_address = "http://localhost/failed.jpg";
-		private const int store_duration = 14; // days
-		private static readonly string[] file_ignore_list =
+		private class Config
 		{
-			"index.html",
-			"style.css",
-			"failed.jpg"
-		}; // never delete these
+			public string listener_prefix = "http://+:80/upload/";
+			public string key = "";
+			public string path = "./files/";
+			public string address = "http://localhost/";
+			public string fail_address = "http://localhost/failed.jpg";
+			public int store_duration = 14; // days
+			public string[] file_ignore_list =
+			{
+				"index.html",
+				"style.css",
+				"failed.jpg"
+			}; // never delete these
+		}
 
 		private static readonly CacheEntryRemovedCallback cachedFileRemove = RemoveCachedFile;
 		private static readonly MemoryCache cache = MemoryCache.Default;
+		private static readonly Config config = new Config();
+		private const string config_path = "config.yml";
 
 		public static void Main(string[] args)
 		{
+			LoadConfig();
 			Cleanup(); // perform cleanup as soon as we start
 
 			HttpListener listener = new HttpListener();
-			listener.Prefixes.Add(listener_prefix);
+			listener.Prefixes.Add(config.listener_prefix);
 			listener.Start();
 
 			Console.WriteLine("Listening...");
@@ -65,11 +68,24 @@ namespace sharexserv
 			//listener.Stop();
 		}
 
+		private static void LoadConfig()
+		{
+			if (File.Exists(config_path))
+			{
+				new Deserializer().Deserialize<Config>(File.ReadAllText(config_path));
+			}
+			else
+			{
+				Console.WriteLine(" !!! CONFIG NOT FOUND, MAKING DEFAULT ONE !!!");
+				File.WriteAllText(config_path, new Serializer().Serialize(config));
+			}
+		}
+
 		private static void Response(HttpListenerRequest request, HttpListenerResponse response)
 		{
 			bool success = false;
 			string fileName = string.Empty;
-			if (request.Headers.Get("key") == key) // password check
+			if (request.Headers.Get("key") == config.key) // password check
 			{
 				string fileType = string.Empty;
 				using (MemoryStream fullReq = new MemoryStream())
@@ -123,17 +139,17 @@ namespace sharexserv
 								// use CRC32 as an unique file name
 								fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
 
-								if (Directory.Exists(path))
+								if (Directory.Exists(config.path))
 								{
-									if (!File.Exists(path + fileName))
+									if (!File.Exists(config.path + fileName))
 									{
-										File.WriteAllBytes(path + fileName, buf);
+										File.WriteAllBytes(config.path + fileName, buf);
 										Console.WriteLine($"Wrote {fileName}");
 
 										// cache file name to remove it after store_duration days
 										CacheItemPolicy policy = new CacheItemPolicy()
 										{
-											AbsoluteExpiration = DateTimeOffset.Now.AddDays(store_duration),
+											AbsoluteExpiration = DateTimeOffset.Now.AddDays(config.store_duration),
 											RemovedCallback = cachedFileRemove
 										};
 
@@ -149,9 +165,9 @@ namespace sharexserv
 			}
 
 			// write file address in the response
-			string responsestring = fail_address;
+			string responsestring = config.fail_address;
 			if (success)
-				responsestring = address + fileName;
+				responsestring = config.address + fileName;
 
 			byte[] buffer = Encoding.UTF8.GetBytes(responsestring);
 			response.ContentLength64 = buffer.Length;
@@ -167,13 +183,13 @@ namespace sharexserv
 		{
 			// iterate through all file in the directory and delete cached file
 			string fileName = arguments.CacheItem.Key;
-			var files = Directory.EnumerateFiles(path);
+			var files = Directory.EnumerateFiles(config.path);
 			foreach (string dirFile in files)
 			{
 				if (Path.GetFileName(dirFile) == fileName)
 				{
 					Console.WriteLine($"Removed {fileName}");
-					File.Delete(path + fileName);
+					File.Delete(config.path + fileName);
 					return;
 				}
 			}
@@ -181,13 +197,13 @@ namespace sharexserv
 
 		private static void Cleanup()
 		{
-			if (Directory.Exists(path))
+			if (Directory.Exists(config.path))
 			{
 				// delete all files in the directory that are older than store_duration
-				foreach (string filePath in Directory.EnumerateFiles(path))
+				foreach (string filePath in Directory.EnumerateFiles(config.path))
 				{
-					if (!file_ignore_list.Contains(Path.GetFileName(filePath)) &&
-					    File.GetLastWriteTimeUtc(filePath).AddDays(store_duration) < DateTime.UtcNow)
+					if (!config.file_ignore_list.Contains(Path.GetFileName(filePath)) &&
+					    File.GetLastWriteTimeUtc(filePath).AddDays(config.store_duration) < DateTime.UtcNow)
 					{
 						Console.WriteLine($"Removed {filePath}");
 						File.Delete(filePath);
@@ -196,7 +212,7 @@ namespace sharexserv
 			}
 			else
 			{
-				Directory.CreateDirectory(path);
+				Directory.CreateDirectory(config.path);
 			}
 		}
 
@@ -219,7 +235,7 @@ namespace sharexserv
 
 			byte[] buffer = new byte[1024];
 			int len = input.Read(buffer, 0, 1024);
-			int startPos = -1;
+			int startPos;
 
 			// Find start boundary
 			while (true)
@@ -261,7 +277,7 @@ namespace sharexserv
 			}
 
 			Array.Copy(buffer, startPos, buffer, 0, len - startPos);
-			len = len - startPos;
+			len -= startPos;
 
 			while (true)
 			{
