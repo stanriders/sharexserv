@@ -5,6 +5,7 @@ using System.Net;
 using System.Text;
 using System.Runtime.Caching;
 using Force.Crc32;
+using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 
 namespace sharexserv
@@ -19,12 +20,13 @@ namespace sharexserv
 			public string address = "http://localhost/";
 			public string fail_address = "http://localhost/failed.jpg";
 			public int store_duration = 14; // days
-			public string[] file_ignore_list =
+			public string[] removal_ignore_list =
 			{
 				"index.html",
 				"style.css",
 				"failed.jpg"
 			}; // never delete these
+			public bool only_images = true;
 		}
 
 		private static readonly CacheEntryRemovedCallback cachedFileRemove = RemoveCachedFile;
@@ -72,7 +74,22 @@ namespace sharexserv
 		{
 			if (File.Exists(config_path))
 			{
-				new Deserializer().Deserialize<Config>(File.ReadAllText(config_path));
+				try
+				{
+					new Deserializer().Deserialize<Config>(File.ReadAllText(config_path));
+				}
+				catch (YamlException e)
+				{
+					string message = e.Message;
+					if (e.InnerException != null)
+						message = e.InnerException.Message;
+
+					Console.WriteLine("!!! Failed to parse config:");
+					Console.WriteLine(message);
+					Console.WriteLine("Press any key to exit...");
+					Console.ReadKey();
+					Environment.Exit(0);
+				}
 			}
 			else
 			{
@@ -97,31 +114,34 @@ namespace sharexserv
 
 					using (StreamReader reader = new StreamReader(fullReq))
 					{
-						// iterate through first 4 lines to find the file extension
-						for (int i = 0; i < 3; i++)
+						if (config.only_images)
 						{
-							// Content-Type
-							if (i == 2)
+							// iterate through first 4 lines to find the file extension
+							for (int i = 0; i < 3; i++)
 							{
-								string contentType = reader.ReadLine()?.Split(':')[1].TrimStart(' ');
-								if (!string.IsNullOrEmpty(contentType) &&
-								    (contentType == "image/png" || contentType == "image/jpeg"))
+								// Content-Type
+								if (i == 2)
 								{
-									// only save if it's a picture
-									shouldSave = true;
-									if (contentType == "image/png")
+									string contentType = reader.ReadLine()?.Split(':')[1].TrimStart(' ');
+									if (!string.IsNullOrEmpty(contentType) &&
+										(contentType == "image/png" || contentType == "image/jpeg"))
 									{
-										fileType = ".png";
-									}
-									else if (contentType == "image/jpeg")
-									{
-										fileType = ".jpg";
+										// only save if it's a picture
+										shouldSave = true;
+										if (contentType == "image/png")
+										{
+											fileType = ".png";
+										}
+										else if (contentType == "image/jpeg")
+										{
+											fileType = ".jpg";
+										}
 									}
 								}
-							}
-							else
-							{
-								reader.ReadLine();
+								else
+								{
+									reader.ReadLine();
+								}
 							}
 						}
 
@@ -202,7 +222,7 @@ namespace sharexserv
 				// delete all files in the directory that are older than store_duration
 				foreach (string filePath in Directory.EnumerateFiles(config.path))
 				{
-					if (!config.file_ignore_list.Contains(Path.GetFileName(filePath)) &&
+					if (!config.removal_ignore_list.Contains(Path.GetFileName(filePath)) &&
 					    File.GetLastWriteTimeUtc(filePath).AddDays(config.store_duration) < DateTime.UtcNow)
 					{
 						Console.WriteLine($"Removed {filePath}");
