@@ -39,7 +39,7 @@ namespace sharexserv
 			LoadConfig();
 			Cleanup(); // perform cleanup as soon as we start
 
-			HttpListener listener = new HttpListener();
+			using var listener = new HttpListener();
 			listener.Prefixes.Add(config.listener_prefix);
 			listener.Start();
 
@@ -105,81 +105,75 @@ namespace sharexserv
 			if (request.Headers.Get("key") == config.key) // password check
 			{
 				string fileType = string.Empty;
-				using (MemoryStream fullReq = new MemoryStream())
+				var fullReq = new MemoryStream();
+				request.InputStream.CopyTo(fullReq);
+				fullReq.Position = 0;
+
+				bool shouldSave = false;
+
+				if (config.only_images)
 				{
-					request.InputStream.CopyTo(fullReq);
-					fullReq.Position = 0;
-
-					bool shouldSave = false;
-
-					using (StreamReader reader = new StreamReader(fullReq))
+					using var reader = new StreamReader(fullReq);
+					// iterate through first 4 lines to find the file extension
+					for (int i = 0; i < 3; i++)
 					{
-						if (config.only_images)
+						// Content-Type
+						if (i == 2)
 						{
-							// iterate through first 4 lines to find the file extension
-							for (int i = 0; i < 3; i++)
+							string contentType = reader.ReadLine()?.Split(':')[1].TrimStart(' ');
+							if (!string.IsNullOrEmpty(contentType) &&
+							    (contentType == "image/png" || contentType == "image/jpeg"))
 							{
-								// Content-Type
-								if (i == 2)
+								// only save if it's a picture
+								shouldSave = true;
+								if (contentType == "image/png")
 								{
-									string contentType = reader.ReadLine()?.Split(':')[1].TrimStart(' ');
-									if (!string.IsNullOrEmpty(contentType) &&
-										(contentType == "image/png" || contentType == "image/jpeg"))
-									{
-										// only save if it's a picture
-										shouldSave = true;
-										if (contentType == "image/png")
-										{
-											fileType = ".png";
-										}
-										else if (contentType == "image/jpeg")
-										{
-											fileType = ".jpg";
-										}
-									}
+									fileType = ".png";
 								}
-								else
+								else if (contentType == "image/jpeg")
 								{
-									reader.ReadLine();
+									fileType = ".jpg";
 								}
 							}
 						}
-
-						// save data
-						if (shouldSave)
+						else
 						{
-							fullReq.Position = 0;
-							using (MemoryStream data = GetFile(request.ContentEncoding,
-								GetBoundary(request.ContentType), fullReq))
-							{
-								data.Position = 0;
-								byte[] buf = new byte[data.Length];
-								data.Read(buf, 0, (int) data.Length);
-
-								// use CRC32 as an unique file name
-								fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
-
-								if (Directory.Exists(config.path))
-								{
-									if (!File.Exists(config.path + fileName))
-									{
-										File.WriteAllBytes(config.path + fileName, buf);
-										Console.WriteLine($"Wrote {fileName}");
-
-										// cache file name to remove it after store_duration days
-										CacheItemPolicy policy = new CacheItemPolicy()
-										{
-											AbsoluteExpiration = DateTimeOffset.Now.AddDays(config.store_duration),
-											RemovedCallback = cachedFileRemove
-										};
-
-										cache.Add(fileName, fileName, policy);
-									}
-
-									success = true;
-								}
-							}
+							reader.ReadLine();
 						}
+					}
+				}
+
+				// save data
+				if (shouldSave)
+				{
+					fullReq.Position = 0;
+					var data = GetFile(request.ContentEncoding, GetBoundary(request.ContentType), fullReq);
+
+					data.Position = 0;
+					byte[] buf = new byte[data.Length];
+					data.Read(buf, 0, (int) data.Length);
+
+					// use CRC32 as an unique file name
+					fileName = Crc32Algorithm.Compute(buf).ToString("X") + fileType;
+
+					if (Directory.Exists(config.path))
+					{
+						if (!File.Exists(config.path + fileName))
+						{
+							File.WriteAllBytes(config.path + fileName, buf);
+							Console.WriteLine($"Wrote {fileName}");
+
+							// cache file name to remove it after store_duration days
+							CacheItemPolicy policy = new CacheItemPolicy()
+							{
+								AbsoluteExpiration = DateTimeOffset.Now.AddDays(config.store_duration),
+								RemovedCallback = cachedFileRemove
+							};
+
+							cache.Add(fileName, fileName, policy);
+						}
+
+						success = true;
 					}
 				}
 			}

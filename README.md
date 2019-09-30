@@ -19,4 +19,4 @@ only_images: true
 ```
 
 ---
-.NET Core 2.2
+.NET Core 3.0
