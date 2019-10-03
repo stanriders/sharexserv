@@ -31,8 +31,8 @@ namespace sharexserv
 
 		private static readonly CacheEntryRemovedCallback cachedFileRemove = RemoveCachedFile;
 		private static readonly MemoryCache cache = MemoryCache.Default;
-		private static readonly Config config = new Config();
-		private const string config_path = "config.yml";
+		private static Config config = new Config();
+		private const string config_path = "./config.yml";
 
 		public static void Main(string[] args)
 		{
@@ -76,7 +76,7 @@ namespace sharexserv
 			{
 				try
 				{
-					new Deserializer().Deserialize<Config>(File.ReadAllText(config_path));
+					config = new Deserializer().Deserialize<Config>(File.ReadAllText(config_path));
 				}
 				catch (YamlException e)
 				{
