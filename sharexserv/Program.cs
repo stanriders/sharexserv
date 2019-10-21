@@ -111,9 +111,9 @@ namespace sharexserv
 
 				bool shouldSave = false;
 
+				using var reader = new StreamReader(fullReq);
 				if (config.only_images)
 				{
-					using var reader = new StreamReader(fullReq);
 					// iterate through first 4 lines to find the file extension
 					for (int i = 0; i < 3; i++)
 					{
